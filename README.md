@@ -20,6 +20,142 @@
 
 ---
 
+---
+
+## 🇰🇷 OpenCode 포팅 버전 (이 저장소에 대해)
+
+> 이 저장소는 [Donchitos/Claude-Code-Game-Studios](https://github.com/Donchitos/Claude-Code-Game-Studios)
+> v1.2.0(MIT)을 **OpenCode에서 사용할 수 있도록 포팅한 포크**입니다. 원본의
+> 저작권·라이선스(MIT)와 크레딧은 그대로 유지됩니다.
+>
+> 원본은 **Anthropic Claude Code(CLI) 전용** 프로젝트입니다. Claude Code 없이
+> **OpenCode**만 쓰는 경우를 위해, 원본의 "게임 스튜디오 조직도와 워크플로"라는
+> **콘텐츠는 그대로 두고, OpenCode가 이해하는 형태로 배선만 다시 연결**했습니다.
+
+### 한눈에 보기
+
+| 항목 | 내용 |
+|---|---|
+| 원본 | Donchitos/Claude-Code-Game-Studios v1.2.0 (commit `05ad7c8`, MIT) |
+| 포팅 대상 도구 | [OpenCode](https://opencode.ai) V2 |
+| 포팅 도구 | `port/port.py` (Python 3, 멱등 재실행 가능) |
+| 설치 위치 | OpenCode 전역 설정 `~/.config/opencode/` |
+| 실제 이식 규모 | 스킬 74개 · 서브에이전트 49개 · 슬래시 커맨드 74개 · 지원 스크립트/문서 198개 · 권한 규칙 84개 |
+
+### 포팅 방식 — 무엇을 어떻게 바꿨나
+
+원본 구조 → OpenCode 구조로 **기계 변환**합니다(손으로 옮기지 않음).
+
+| 원본 (Claude Code용) | 포팅 결과 (OpenCode용) | 변환 내용 |
+|---|---|---|
+| `.claude/skills/<id>/SKILL.md` | `~/.config/opencode/skills/<id>/SKILL.md` | 형식이 사실상 동일. Claude 전용 frontmatter 키(`allowed-tools`, `argument-hint`, `user-invocable`, `model`) 제거, 본문의 `.claude/` 경로 751곳을 절대경로로 치환, `AskUserQuestion` → `question` 도구 표현으로 교체 |
+| `.claude/agents/<id>.md` | `~/.config/opencode/agents/<id>.md` | frontmatter를 OpenCode V2 스키마로 변환: `tools:` 목록 → `permissions` 규칙(deny), `maxTurns` → `steps`, `model: opus/sonnet` 제거(세션 모델 **상속**), `memory` 제거. 에이전트 이름은 그대로라 `subagent` 도구가 이름으로 호출 가능 |
+| 스킬 = Claude 슬래시 커맨드 | `~/.config/opencode/commands/<id>.md` | 스킬 74개를 `/start`, `/brainstorm` 같은 슬래시 커맨드로 **자동 생성** |
+| `.claude/settings.json`의 allow/deny 목록 | `opencode.jsonc`의 `permissions` | `Bash(...)` → `shell` 액션 등으로 변환 후 전역 규칙에 병합(`rm -rf`, `git push --force`, `.env` 읽기 등 차단) |
+| `CLAUDE.md` | 전역 `AGENTS.md`에 사용법 섹션 추가 | 기존 AGENTS.md 내용은 보존, 섹션만 추가(멱등) |
+| `.claude/`의 scripts·docs·rules·templates | `~/.config/opencode/ccgs/` | bash 헬퍼 35개 포함 전체 보관, 경로 치환만 수행 |
+| `project.yaml` | 그대로 사용 | 프로젝트 루트의 설정 파일 형식은 양쪽 도구 무관. PyYAML 불필요(스킬이 bash 헬퍼로 읽음) |
+
+### 설치 방법
+
+**요구사항**: Git, Python 3, OpenCode, Windows라면 Git for Windows(bash).
+
+```bash
+# 1) 이 저장소 클론
+git clone https://github.com/<your-id>/Claude-Code-Game-Studios.git
+cd Claude-Code-Game-Studios
+
+# 2) 원본 내용이 이 폴더 안에 그대로 있으므로, 포트 스크립트 실행
+python port/port.py
+```
+
+실행 시 `~/.config/opencode/` 아래에 skills / agents / commands / ccgs가
+생성되고, `opencode.jsonc`에 권한 규칙이 병합되며, 전역 `AGENTS.md`에 사용법
+섹션이 추가됩니다. **멱등**이므로 여러 번 실행해도 안전하며, 원본을
+`git pull`로 업데이트한 뒤 다시 실행하면 변경분이 그대로 반영됩니다.
+
+동시에 Claude Code 쪽 배선(`.claude/` 원본 트리)은 그대로 유지되므로, 이
+저장소는 **한 폴더에서 Claude Code와 OpenCode를 모두 지원**합니다.
+
+### 설치 후 사용법
+
+- **슬래시 커맨드**: `/start`(온보딩), `/brainstorm`, `/design-system`,
+  `/dev-story`, `/gate-check` 등 — 원본과 동일한 이름으로 사용
+- **스킬 직접 로드**: OpenCode의 `skill` 도구에 `start`, `dev-story` 등 ID 지정
+- **스튜디오 팀 호출**: "creative-director 에이전트로 검토해줘"처럼 이름으로
+  서브에이전트 호출(이사 3 · 부서장 8 · 전문가 38)
+- **프로젝트 적용**: 게임 폴더에서 `/adopt`(기존 프로젝트) 또는 `/start`(신규)
+  실행 → 해당 폴더에 `project.yaml` 생성. 스킬들은 프로젝트를 인식하고
+  design/ · production/ · docs/ 산출물을 관리
+- **주의**: 스킬 내부는 bash 헬퍼를 호출하므로 `bash`가 필요합니다. Windows에서
+  PATH에 bash가 없으면 포트 스크립트가 자동으로 `bash.cmd` 심을 만들어 줍니다.
+
+### ✅ 이식된 것 / ❌ 이식되지 않은 것
+
+**이식됨**
+
+- 스킬 74개(내용·워크플로 전부) — `question` 도구 표현만 OpenCode식으로 조정
+- 서브에이전트 49개(이름·시스템 프롬프트 전부, 권한/스텝 제한 포함)
+- 슬래시 커맨드 74개
+- settings.json 권한 규칙 84개(안전망: `rm -rf` · `git push --force` ·
+  `git reset --hard` · `.env`/`.uasset`/`.umap` 편집 차단 등)
+- bash 헬퍼 스크립트 35개, 문서/룰/템플릿 전체 보관
+- 전역 `AGENTS.md`에 포팅 사용법 섹션(멱등)
+
+**이식되지 않음 — Claude Code 전용 기능**
+
+| 기능 | 원본에서의 역할 | 미이식 사유 / 현재 상태 |
+|---|---|---|
+| `settings.json` 훅 15개 | PreToolUse/PostToolUse/SessionStart 등 8종 이벤트에서 커밋·푸시·에셋·문서 변경 자동 검증 | OpenCode에 대응 기능 없음. 보안은 권한 규칙이 대체. 스크립트 파일은 `ccgs/hooks/`에 보존되어 있어 추후 OpenCode 플러그인으로 재작성 가능 |
+| `statusLine` | 세션 상태 표시줄 | OpenCode에 동등 설정 없음(무시됨) |
+| 경로별 룰 자동주입 (`.claude/rules/`) | 편집 중인 파일 경성에 따라 코딩 규칙 자동 주입 | OpenCode는 경로 스코프 규칙 미지원. 파일은 `ccgs/rules/`에 보존(필요 시 수동 참조) |
+| `$CLAUDE_PROJECT_DIR` 등 환경변수 | 훅/스킬이 프로젝트 루트를 찾는 변수 | OpenCode엔 없음 → 포트가 절대경로/상대경로로 치환. 관련 문서(`ccgs/docs/config-resolution.md`)에 포트 노트 자동 추가 |
+
+**알려진 제약**
+
+- 전역 설치는 **모든 폴더**에 스튜디오가 로드됩니다(훅 제외). 프로젝트별
+  적용은 `/adopt`로 `project.yaml`을 만든 폴더에서 완전히 동작합니다.
+- 서브에이전트의 모델은 원본의 `opus/sonnet` 지정을 버리고 **세션 모델을
+  상속**합니다(원하는 경우 에이전트 파일에 `model: provider/model` 추가).
+- 에이전트 대부분이 쓰기 권한을 기본 deny로 제한했으므로(읽기 전용 에이전트),
+  원본 `tools` 목록에 없는 도구는 차단됩니다. 필요한 에이전트는 해당
+  `agents/<id>.md`의 `permissions`를 수정하세요.
+
+### 검증 결과 (포팅 직후 실측)
+
+```
+skills=74 agents=49 commands=74 ccgs_files=198 permission_rules=84
+frontmatter problems: 0        # 49개 에이전트 전부 OpenCode V2 스키마 파싱 통과
+Claude-isms 잔여: 22건          # 미연결 훅 스크립트의 주석/env 언급 + 참고용 원문
+```
+
+OpenCode 세션에서 스킬 74개가 정상 등록되고 전역 `AGENTS.md`와
+`opencode.jsonc` 변경사항이 설정 로드에 반영되는 것을 확인했습니다.
+
+### 업데이트 / 제거
+
+```bash
+# 원본 최신화 → 재포트
+git pull
+python port/port.py
+
+# 제거: ~/.config/opencode/ 에서 skills/<id> agents/<id>.md commands/<id>.md
+# ccgs/ 디렉터리와 opencode.jsonc의 permissions 블록을 삭제하면 원상복구
+```
+
+### 크레딧
+
+- 원본: [Donchitos/Claude-Code-Game-Studios](https://github.com/Donchitos/Claude-Code-Game-Studios) — MIT License
+- 이 포팅은 원본의 **파생 저작물**이며 동일하게 MIT로 공개합니다.
+
+---
+
+# 📖 원본 README — Claude Code Game Studios (Donchitos/Claude-Code-Game-Studios v1.2.0)
+
+아래부터는 원본 프로젝트의 README 원문입니다. 원본은 Claude Code 전용 문서이므로
+일부 표현(슬래시 커맨드 실행 환경, 훅, statusline 등)은 이 포팅 버전에서는
+적용되지 않습니다.
+
 ## Why This Exists
 
 Building a game solo with AI is powerful — but a single chat session has no structure. No one stops you from hardcoding magic numbers, skipping design docs, or writing spaghetti code. There's no QA pass, no design review, no one asking "does this actually fit the game's vision?"
