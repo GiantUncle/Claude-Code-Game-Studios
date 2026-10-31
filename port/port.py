@@ -109,6 +109,22 @@ def rewrite(s):
     # concrete agent ids ("subagent_type: release-manager").
     s = re.sub(r"subagent_type:\s*\[([^\]]+)\]", r"subagent: <\1>", s)
     s = re.sub(r"subagent_type:\s*([A-Za-z0-9_-]+)", r"the `\1` subagent", s)
+    # 6) [port-fix 2026-11-01] `[ -n "${CLAUDE_PROJECT_DIR:-}" ]` is an
+    #    EMPTINESS test, not a path use. Substituting the path value "." into it
+    #    makes the test vacuously TRUE, so a guarded branch fires unconditionally
+    #    (measured: 19 shell lines across hooks/ and scripts/project-coherence.sh).
+    #    Drop the dead guard; any path use on the same line is handled by step 3.
+    s = s.replace('[ -n "." ] && ', '')
+    s = s.replace('[ -n "." ] || ', '')
+    s = s.replace('[ -z "." ] && ', '')
+    s = s.replace('[ -z "." ] || ', '')
+    # 7) [port-fix 2026-11-01] Conventional code dirs are not mandatory. When the
+    #    engine's mapped dir is absent, find it by the engine's MARKER file - the
+    #    marker proves the engine, so this is not a guess. Handles both the
+    #    `root`/`src` (yaml-helper.sh) and `CODE_ROOT`/`CSRC` (project-state.sh)
+    #    spellings. Without it a project keeping Godot in godot/ reports 0 sources,
+    #    and 0 sources is indistinguishable from scanning cleanly.
+    s = _add_code_root_marker_fallback(s)
     return s
 
 
@@ -316,6 +332,62 @@ _ROOT_FN = '''ccgs_project_root() {  # [port] project root = nearest project.yam
 '''
 
 
+
+_CODE_ROOT_MARKERS = {"src": "project.godot",
+                      "Assets": "ProjectSettings/ProjectVersion.txt",
+                      "Source": "*.uproject"}
+
+
+def _add_code_root_marker_fallback(s):
+    """[port-fix 2026-11-01] See rewrite() step 7."""
+    out = []
+    lines = s.split("\n")
+    i = 0
+    while i < len(lines):
+        ln = lines[i]
+        m = re.match(r'^([ \t]*)\w+[ \t]*\)[ \t]*(CODE_ROOT|root)="(src|Assets|Source)" ;;$', ln)
+        out.append(ln)
+        if m:
+            ind, var, conv = m.group(1), m.group(2), m.group(3)
+            srcvar = "CSRC" if var == "CODE_ROOT" else "src"
+            # 엔진명을 읽는 표현식은 두 파일에서 다르다.
+            eng = ('"$ENGINE"' if var == "CODE_ROOT" else '"$ename"')
+            blk = [
+                ind + "# [port-fix 2026-11-01] The conventional dir is not mandatory: when",
+                ind + "#   it is absent, find the code root by the engine's MARKER file.",
+                ind + 'if [ -n "$%s" ] && [ ! -d "$%s" ]; then' % (var, var),
+                ind + '  _crmk=""',
+                ind + '''  case "$(printf '%%s' %s | tr '[:upper:]' '[:lower:]')" in''' % eng,
+                ind + '    godot)   _crmk="project.godot" ;;',
+                ind + '    unity)   _crmk="ProjectSettings/ProjectVersion.txt" ;;',
+                ind + '    unreal*) _crmk="*.uproject" ;;',
+                ind + "  esac",
+                ind + '  _crn=0; _crc=""',
+                ind + '  if [ -n "$_crmk" ]; then',
+                ind + "    for _crd in */; do",
+                ind + '      _crd="${_crd%/}"',
+                ind + "      for _crm in $_crd/$_crmk; do",
+                ind + '        if [ -e "$_crm" ]; then _crc="$_crd"; _crn=$((_crn + 1)); break; fi',
+                ind + "      done",
+                ind + "    done",
+                ind + "  fi",
+                ind + '  if [ "$_crn" = 1 ]; then %s="$_crc"; %s="detected-marker"; else %s=""; fi' % (
+                    var, srcvar, var),
+                ind + "fi",
+            ]
+            # `esac`/`fi` 로 끝나는 case 블록 뒤에 붙인다: 블록의 esac 다음 줄에 삽입.
+            j = i + 1
+            while j < len(lines) and "esac" not in lines[j]:
+                out.append(lines[j])
+                j += 1
+            if j < len(lines):
+                out.append(lines[j])          # esac
+                out.extend(blk)
+            i = j
+        i += 1
+    return "\n".join(out)
+
+
 def patch_root_anchors(path):
     """Scripts assume `<script>/../..` is the project root - true when the
     framework ships inside the project repo (upstream layout), false after a
@@ -374,7 +446,27 @@ def patch_yaml_helper(path):
              '      fi\n')
     b_new = ('      # [port] upward search, same as the resolve_config branch above.\n'
              + search)
+    # NOTE: patch_yaml_helper runs AFTER copy_text_file() has applied rewrite(),
+    #   so every match here is POST-rewrite text (the sibling a_old/b_old below
+    #   already read `[ -z "." ]`, which is the same evidence). Step 6 of
+    #   rewrite() has already stripped the vacuous `[ -n "." ] && ` guard, so the
+    #   line now reads `if [ -f "./project.yaml" ]; then`.
+    c_old = ('  if [ -f "./project.yaml" ]; then\n'
+             '    _YH_ROOT="."; return 0\n'
+             '  fi\n')
+    # +1 keeps the injected resolver: _YH_ROOT is what every reader consults, so
+    #   without this the helpers resolved the root from cwd only (measured: from
+    #   godot/ the config read engine: unset and silently fell back to the legacy
+    #   mirror). Rules 1-2 above still return first, so a base-less
+    #   project.local.yaml still raises its hard error instead of inheriting an
+    #   ancestor's project.yaml.
+    c_new = ('  # [port] OpenCode has no CLAUDE_PROJECT_DIR. Rules 1-2 above keep cwd\n'
+             '  # winning; this is upstream rule 3 - the nearest project.yaml above cwd.\n'
+             '  _YH_ROOT="$(ccgs_project_root)"; return 0\n')
     n = 0
+    if c_old in t:
+        t = t.replace(c_old, c_new)
+        n += 1
     if a_old in t:
         t = t.replace(a_old, a_new)
         n += 1
@@ -384,6 +476,79 @@ def patch_yaml_helper(path):
     if n:
         path.write_text(t, encoding="utf-8", newline="\n")
     return n
+
+
+_GATE_V2 = """
+---
+
+## [OpenCode port] Adopt gate v2: instruction file + re-adoption normalization
+
+Upstream /adopt does not touch the project instruction file. In OpenCode,
+`AGENTS.md` is the only channel for project conventions, and a project can be
+adopted more than once. This port adds a normalization gate:
+
+### Step 0 - already-adopted detection (run BEFORE Phase 1)
+
+Signals that a project is already adopted: `project.yaml` at the root,
+`docs/adoption-plan-*.md`, `production/` artifacts, `AGENTS.md` or `CLAUDE.md`.
+If **two or more** signals are present, ask with the `question` tool (recommend
+option 1):
+
+1. **Gap fill (recommended)** - skip the full re-audit; run the gap check
+   below, then only fill what is missing.
+2. **Full re-adoption** - run Phases 1-7 as usual (fresh audit).
+3. **Report only** - no writes; print the current state and stop.
+
+A dismissed or skipped question is not an answer: ask again in plain text.
+
+### Gap check (option 1)
+
+Check each item; only missing or wrong ones become plan items:
+
+- `project.yaml` present and readable
+  (`bash <ccgs>/hooks/yaml-helper.sh resolve_config` succeeds).
+- Instruction file: `AGENTS.md` present; if only `CLAUDE.md` exists, plan a
+  migration item (rename to `AGENTS.md` and inline any `@path` imports -
+  OpenCode does not process Claude's `@` imports).
+- `project.yaml` `engine.*` values match the actual engine project file (e.g.
+  `project.godot` renderer/physics). Flag inherited mismatches, e.g. a
+  `testing.framework` that is not actually installed in this project.
+- Code root known (skills ask for it via `/start` when unset).
+
+### Instruction-file rule (in all paths)
+
+- `AGENTS.md` present -> note it; conventions load automatically.
+- `CLAUDE.md` present -> plan migration: rename to `AGENTS.md`, inline `@path`
+  imports.
+- neither present -> plan a required item: "Create `AGENTS.md` (engine, naming
+  conventions, test runner - the content `/setup-engine` would produce)".
+
+### Phase 4 / Phase 6
+
+The instruction-file item is required unless `AGENTS.md` already exists.
+Record the instruction-file decision and the chosen Step 0 option in
+`docs/adoption-plan-<date>.md` so the next audit can verify them.
+"""
+
+
+def patch_adopt_skill(path):
+    """[port] Upstream /adopt only audits and writes a migration plan; the
+    project instruction file is created by /setup-engine. In OpenCode,
+    AGENTS.md is the only channel for project conventions, so an adopted
+    project can silently end up without any (seen in the field: InitialGSS).
+    Add the instruction-file + re-adoption normalization gate.
+    """
+    t = path.read_text(encoding="utf-8")
+    if "[OpenCode port] Adopt gate v2" in t:
+        return 0
+    old_marker = "## [OpenCode port] Instruction file gate"
+    if old_marker in t:
+        i = t.index("\n---\n\n## [OpenCode port] Instruction file gate")
+        t = t[:i] + "\n" + _GATE_V2.strip("\n") + "\n"
+    else:
+        t = t.rstrip("\n") + "\n" + _GATE_V2.strip("\n") + "\n"
+    path.write_text(t, encoding="utf-8", newline="\n")
+    return 1
 
 
 def add_port_note(path):
@@ -556,6 +721,8 @@ def main():
     skill_descs = install_skills()
     install_agents()
     install_support_tree()
+    gate = patch_adopt_skill(OC / "skills" / "adopt" / "SKILL.md")
+    log(f"  adopt skill gate patched: {gate}")
     install_commands(skill_descs)
     log("porting permissions from settings.json ...")
     rules = port_permissions()

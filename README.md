@@ -201,6 +201,19 @@ OpenCode 세션에서 스킬 74개가 정상 등록되고 전역 `AGENTS.md`와
   `ccgs/AGENTS.md`로 보존
 - 검증: 설치 트리에서 `CLAUDE.md` 잔여 0건
 
+**6) `/adopt` 게이트 v2 — 재adopt 정규화 (사용자 승인된 추가 동작)**
+
+- 배경: adopt가 끝난 프로젝트들이 같은 상태가 아닌 사례 발견(지시 파일 유무),
+  그리고 이미 adopt된 프로젝트를 다시 adopt하면 전체 재감사가 불필요하게 돈다
+- 추가: 설치된 `/adopt` 스킬에 **Step 0 정규화 게이트** — 기존 adopt 신호
+  (`project.yaml`, adoption-plan, `production/`, 지시 파일)가 2개 이상이면
+  `question` 도구로 ①**갭 채우기(권장)** ②전체 재adopt ③보고만 중 선택.
+  갭 채우기 시에만 부족/불일치 항목(project.yaml 가독성, 지시 파일, `engine.*`
+  실측 대조, code_root)을 계획에 넣는다
+- 원칙: 이 항목은 **원본에 없는 추가 동작**이며, 사용자 승인 하에 포함됨.
+  제거하려면 `skills/adopt/SKILL.md` 끝의 `[OpenCode port] Adopt gate v2`
+  섹션만 지우면 원본 동작으로 복원
+
 **의도적으로 남겨둔 것**: `agent-check.sh`·`compat-inventory.sh` 등 린터/진단
 스크립트가 Claude 토큰을 **탐지 대상**으로 쓰는 패턴, 훅 스크립트 내 주석,
 업스트림 `CLAUDE.md` 참고용 원본(`ccgs/studio-reference.md`) — 이들은 실행
