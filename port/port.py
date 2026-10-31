@@ -98,6 +98,12 @@ def rewrite(s):
     # 5) Claude tool names -> OpenCode equivalents / neutral phrasing
     s = s.replace("`AskUserQuestion`", "the `question` tool")
     s = s.replace("AskUserQuestion", "the question tool")
+    # 5b) Claude reads project instructions from CLAUDE.md, OpenCode reads
+    #     AGENTS.md. Skills that edit or verify CLAUDE.md would otherwise
+    #     write a file OpenCode never loads. Longest form first.
+    s = s.replace("CLAUDE.local.md", "AGENTS.md")
+    s = s.replace("CLAUDE.md", "AGENTS.md")
+    s = s.replace("4-claude-md-stack", "4-agents-md-stack")
     # Claude Task-tool vocabulary -> OpenCode subagent phrasing.
     # Bracketed placeholders ("subagent_type: [engine specialist]") first, then
     # concrete agent ids ("subagent_type: release-manager").
@@ -118,7 +124,7 @@ def convert_skill(text):
     if fm is None:
         return rewrite(text), None
     d = fm_lines_to_dict(fm)
-    keep = {k: d[k] for k in ("name", "description") if d.get(k)}
+    keep = {k: rewrite(d[k]) for k in ("name", "description") if d.get(k)}
     fm_text = yaml.safe_dump(keep, allow_unicode=True, sort_keys=False,
                              width=10**6).rstrip()
     desc = keep.get("description", "")
@@ -153,7 +159,8 @@ def convert_agent(text, agent_id):
         perms.append(("websearch", "*", "deny"))
     if "WebFetch" not in tools:
         perms.append(("webfetch", "*", "deny"))
-    head = ["---", "description: " + yaml_quote(str(d.get("description", "")).strip()),
+    head = ["---",
+            "description: " + yaml_quote(rewrite(str(d.get("description", "")).strip())),
             "mode: subagent"]
     if perms:
         head.append("permissions:")
@@ -202,6 +209,11 @@ def install_skills():
                 target.write_text(res, encoding="utf-8", newline="\n")
             else:
                 copy_text_file(f, target)
+            # reference files named after Claude concepts follow the rename
+            if "claude" in target.name.lower() and target.name != "SKILL.md":
+                renamed = target.with_name(
+                    target.name.lower().replace("claude", "agents"))
+                target.rename(renamed)
         if not desc:
             desc = "Claude Code Game Studios skill: " + sid
         skill_descs[sid] = desc
@@ -249,7 +261,11 @@ def install_support_tree():
             copy_text_file(s, CCGS / extra)
             n += 1
     shutil.copy2(SRC / "project.yaml", CCGS / "project.template.yaml")
+    # the framework's own instruction file: kept verbatim for provenance, and
+    # under AGENTS.md so rewritten doc references (CLAUDE.md -> AGENTS.md) still
+    # resolve inside the support tree
     shutil.copy2(SRC / "CLAUDE.md", CCGS / "studio-reference.md")
+    shutil.copy2(SRC / "CLAUDE.md", CCGS / "AGENTS.md")
     add_port_note(CCGS / "docs" / "config-resolution.md")
     stats["ccgs_files"] = n
 

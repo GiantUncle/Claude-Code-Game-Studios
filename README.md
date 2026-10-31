@@ -1,28 +1,12 @@
 <p align="center">
-  <h1 align="center">Claude Code Game Studios</h1>
-  <p align="center">
-    Turn a single Claude Code session into a full game development studio.
-    <br />
-    49 agents. 74 skills. One coordinated AI team.
-  </p>
-</p>
-
-<p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
-  <a href=".claude/agents"><img src="https://img.shields.io/badge/agents-49-blueviolet" alt="49 Agents"></a>
-  <a href=".claude/skills"><img src="https://img.shields.io/badge/skills-74-green" alt="74 Skills"></a>
-  <a href=".claude/hooks"><img src="https://img.shields.io/badge/hooks-15-orange" alt="15 Hooks"></a>
-  <a href=".claude/rules"><img src="https://img.shields.io/badge/rules-14-red" alt="14 Rules"></a>
-  <a href="https://code.claude.com/docs"><img src="https://img.shields.io/badge/built%20for-Claude%20Code-f5f5f5?logo=anthropic" alt="Built for Claude Code"></a>
-  <a href="https://www.buymeacoffee.com/donchitos3"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Support%20this%20project-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee"></a>
-  <a href="https://github.com/sponsors/Donchitos"><img src="https://img.shields.io/badge/GitHub%20Sponsors-Support%20this%20project-ea4aaa?logo=githubsponsors&logoColor=white" alt="GitHub Sponsors"></a>
+  <strong>⚠️ 이 저장소는 <a href="https://github.com/Donchitos/Claude-Code-Game-Studios">원본</a>의
+  포크로, <a href="https://opencode.ai">OpenCode</a>용 포팅이 적용되어 있습니다.
+  포팅 설명과 사용법은 <a href="#-opencode-포팅-버전--이-저장소에-대해">바로 아래</a>에 있습니다.</strong>
 </p>
 
 ---
 
----
-
-## 🇰🇷 OpenCode 포팅 버전 (이 저장소에 대해)
+# 🇰🇷 OpenCode 포팅 버전 — 이 저장소에 대해
 
 > 이 저장소는 [Donchitos/Claude-Code-Game-Studios](https://github.com/Donchitos/Claude-Code-Game-Studios)
 > v1.2.0(MIT)을 **OpenCode에서 사용할 수 있도록 포팅한 포크**입니다. 원본의
@@ -32,13 +16,34 @@
 > **OpenCode**만 쓰는 경우를 위해, 원본의 "게임 스튜디오 조직도와 워크플로"라는
 > **콘텐츠는 그대로 두고, OpenCode가 이해하는 형태로 배선만 다시 연결**했습니다.
 
+**English summary:** this fork ports the upstream *Claude Code*-only framework
+to [OpenCode](https://opencode.ai) V2. The studio content (49 agents, 74
+workflow skills, templates, bash helpers) ships unchanged; `port/port.py`
+converts the wiring — skills, agents, slash commands, permissions, project-root
+resolution and instruction-file targets — into OpenCode's formats and installs
+them globally. Claude-only features (settings hooks, statusline, path-scoped
+rules) are intentionally not ported; they are listed below with workarounds.
+
+## 목차
+
+- 한눈에 보기
+- 포팅 방식 — 무엇을 어떻게 바꿨나
+- 설치 방법
+- 설치 후 사용법
+- 이식된 것 / 이식되지 않은 것
+- 알려진 제약
+- 검증 결과
+- 포트 수정 이력
+- 업데이트 / 제거
+- 크레딧
+
 ### 한눈에 보기
 
 | 항목 | 내용 |
 |---|---|
 | 원본 | Donchitos/Claude-Code-Game-Studios v1.2.0 (commit `05ad7c8`, MIT) |
 | 포팅 대상 도구 | [OpenCode](https://opencode.ai) V2 |
-| 포팅 도구 | `port/port.py` v1.2.1 (Python 3, 멱등 재실행 가능) |
+| 포팅 도구 | `port/port.py` v1.2.2 (Python 3, 멱등 재실행 가능) |
 | 설치 위치 | OpenCode 전역 설정 `~/.config/opencode/` |
 | 실제 이식 규모 | 스킬 74개 · 서브에이전트 49개 · 슬래시 커맨드 74개 · 지원 스크립트/문서 198개 · 권한 규칙 84개 |
 
@@ -52,7 +57,7 @@
 | `.claude/agents/<id>.md` | `~/.config/opencode/agents/<id>.md` | frontmatter를 OpenCode V2 스키마로 변환: `tools:` 목록 → `permissions` 규칙(deny), `maxTurns` → `steps`, `model: opus/sonnet` 제거(세션 모델 **상속**), `memory` 제거. 에이전트 이름은 그대로라 `subagent` 도구가 이름으로 호출 가능 |
 | 스킬 = Claude 슬래시 커맨드 | `~/.config/opencode/commands/<id>.md` | 스킬 74개를 `/start`, `/brainstorm` 같은 슬래시 커맨드로 **자동 생성** |
 | `.claude/settings.json`의 allow/deny 목록 | `opencode.jsonc`의 `permissions` | `Bash(...)` → `shell` 액션 등으로 변환 후 전역 규칙에 병합(`rm -rf`, `git push --force`, `.env` 읽기 등 차단) |
-| `CLAUDE.md` | 전역 `AGENTS.md`에 사용법 섹션 추가 | 기존 AGENTS.md 내용은 보존, 섹션만 추가(멱등) |
+| `CLAUDE.md` (프로젝트 지시 파일) | `AGENTS.md` | OpenCode는 프로젝트 지시를 `AGENTS.md`에서 읽는다. 본문·frontmatter·파일명(`4-claude-md-stack.md` → `4-agents-md-stack.md`)까지 전부 치환 — `/setup-engine` 등이 CLAUDE.md를 편집하던 동작이 AGENTS.md로 가지 않게 하기 위함 |
 | `.claude/`의 scripts·docs·rules·templates | `~/.config/opencode/ccgs/` | bash 헬퍼 35개 포함 전체 보관, 경로 치환만 수행 |
 | `project.yaml` | 그대로 사용 | 프로젝트 루트의 설정 파일 형식은 양쪽 도구 무관. PyYAML 불필요(스킬이 bash 헬퍼로 읽음) |
 
@@ -120,23 +125,28 @@ python port/port.py
 - 에이전트 대부분이 쓰기 권한을 기본 deny로 제한했으므로(읽기 전용 에이전트),
   원본 `tools` 목록에 없는 도구는 차단됩니다. 필요한 에이전트는 해당
   `agents/<id>.md`의 `permissions`를 수정하세요.
+- OpenCode의 `AGENTS.md`는 Claude Code의 `@path` import 문법을 지원하지
+  않습니다. 엔진 레퍼런스 고정(`@docs/engine-reference/<engine>/VERSION.md`)
+  등 import 기반 동작은 해당 내용을 직접 기재하는 방식으로 대체하세요.
 
-### 검증 결과 (포팅 직후 실측)
+### 검증 결과 (최종 실측)
 
 ```
-skills=74 agents=49 commands=74 ccgs_files=198 permission_rules=84
-frontmatter problems: 0        # 49개 에이전트 전부 OpenCode V2 스키마 파싱 통과
-bash -n: 0 / 51                # 이식된 bash 스크립트 전부 구문 검사 통과
-Claude-isms 잔여: 코드 기준 0    # 남은 언급은 린터 정규식·주석·포트 노트뿐
+skills=74  agents=49  commands=74  ccgs_files=198  permission_rules=84
+bash -n: 0 / 51                 # 이식된 bash 스크립트 전부 구문 검사 통과
+frontmatter problems: 0         # 49개 에이전트 전부 OpenCode V2 스키마 파싱 통과
+Claude-isms 잔여(코드 기준): 0    # CLAUDE.md / AskUserQuestion / claude CLI / ${CLAUDE_*} = 0
+기능 테스트: 통과                 # 프로젝트 루트 해석(하위폴더 포함), project.yaml 읽기, resolve_config
 ```
 
 OpenCode 세션에서 스킬 74개가 정상 등록되고 전역 `AGENTS.md`와
 `opencode.jsonc` 변경사항이 설정 로드에 반영되는 것을 확인했습니다.
 
-### 포트 수정 이력 (v1.2.1 — 사용자 제보로 발견·수정)
+### 포트 수정 이력 (v1.2.1–v1.2.2 — 사용 중 발견·수정)
 
-포팅 후 실제 사용 중 보고된 오류들을 근본 원인까지 추적해 모두 고쳤습니다.
-아래 항목들은 **원본 버그가 아니라, 포팅 과정에서 생긴 결함**입니다.
+포팅 후 실제 사용 중 보고된 오류들과, 이어서 진행한 전면 재감사에서 찾은
+결함들을 근본 원인까지 추적해 모두 고쳤습니다. 아래 항목들은 **원본 버그가
+아니라, 포팅 과정에서 생긴 결함**입니다.
 
 **1) `${...}` 중괄호 형태 환경변수 누락 → bash 구문 오류**
 
@@ -177,6 +187,20 @@ OpenCode 세션에서 스킬 74개가 정상 등록되고 전역 `AGENTS.md`와
   플레이스홀더 포함), `AskUserQuestion` → `question` 도구 표현(잔여 0)
 - `ccgs/docs/config-resolution.md`에 OpenCode 포트 노트 자동 주입(멱등)
 
+**5) `CLAUDE.md` 참조 — OpenCode가 읽지 않는 파일을 편집하라던 문제**
+
+- 증상: 없음(사용자 "오류 있으면 안 된다" 요청으로 전면 재감사에서 발견).
+  `setup-engine` 등 27개 파일이 `CLAUDE.md`를 참조/편집 대상으로 지목
+- 원인: Claude Code는 프로젝트 지시를 `CLAUDE.md`에서 읽지만, **OpenCode는
+  `AGENTS.md`**에서 읽는다. 포팅이 이 매핑을 빠뜨리면 스킬이 "CLAUDE.md의
+  Technology Stack을 업데이트하라"고 해도 OpenCode는 그 파일을 읽지 않음 —
+  조용히 무시되는 설정
+- 수정: 본문·**frontmatter description**·참고 파일명까지 `CLAUDE.md` →
+  `AGENTS.md`로 치환(`4-claude-md-stack.md` → `4-agents-md-stack.md` 이름
+  변경 포함). 프레임워크 자신의 지시 파일은 `ccgs/studio-reference.md` +
+  `ccgs/AGENTS.md`로 보존
+- 검증: 설치 트리에서 `CLAUDE.md` 잔여 0건
+
 **의도적으로 남겨둔 것**: `agent-check.sh`·`compat-inventory.sh` 등 린터/진단
 스크립트가 Claude 토큰을 **탐지 대상**으로 쓰는 패턴, 훅 스크립트 내 주석,
 업스트림 `CLAUDE.md` 참고용 원본(`ccgs/studio-reference.md`) — 이들은 실행
@@ -200,11 +224,42 @@ python port/port.py
 
 ---
 
-# 📖 원본 README — Claude Code Game Studios (Donchitos/Claude-Code-Game-Studios v1.2.0)
+---
 
-아래부터는 원본 프로젝트의 README 원문입니다. 원본은 Claude Code 전용 문서이므로
-일부 표현(슬래시 커맨드 실행 환경, 훅, statusline 등)은 이 포팅 버전에서는
-적용되지 않습니다.
+<p align="center">
+  <sub>↑ 포팅 설명 끝 · 아래부터는 원본 README(업스트림 그대로)입니다 ↓</sub>
+</p>
+
+---
+
+# 📖 원본 README — Claude Code Game Studios
+
+<p align="center">
+  <sub>Donchitos/Claude-Code-Game-Studios v1.2.0 원문 · <strong>Claude Code 전용 문서</strong>이므로
+  일부 표현(슬래시 커맨드 실행 환경, 훅, statusline 등)은 이 포팅 버전에선 적용되지 않습니다</sub>
+</p>
+
+<p align="center">
+  <h1 align="center">Claude Code Game Studios</h1>
+  <p align="center">
+    Turn a single Claude Code session into a full game development studio.
+    <br />
+    49 agents. 74 skills. One coordinated AI team.
+  </p>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+  <a href=".claude/agents"><img src="https://img.shields.io/badge/agents-49-blueviolet" alt="49 Agents"></a>
+  <a href=".claude/skills"><img src="https://img.shields.io/badge/skills-74-green" alt="74 Skills"></a>
+  <a href=".claude/hooks"><img src="https://img.shields.io/badge/hooks-15-orange" alt="15 Hooks"></a>
+  <a href=".claude/rules"><img src="https://img.shields.io/badge/rules-14-red" alt="14 Rules"></a>
+  <a href="https://code.claude.com/docs"><img src="https://img.shields.io/badge/built%20for-Claude%20Code-f5f5f5?logo=anthropic" alt="Built for Claude Code"></a>
+  <a href="https://www.buymeacoffee.com/donchitos3"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Support%20this%20project-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee"></a>
+  <a href="https://github.com/sponsors/Donchitos"><img src="https://img.shields.io/badge/GitHub%20Sponsors-Support%20this%20project-ea4aaa?logo=githubsponsors&logoColor=white" alt="GitHub Sponsors"></a>
+</p>
+
+---
 
 ## Why This Exists
 
