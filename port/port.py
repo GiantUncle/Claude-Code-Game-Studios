@@ -66,13 +66,42 @@ def split_fm(text):
     return None, text
 
 
+_SKILL_DIR_ABS = None   # set per-skill in install_skills()
+
+
 def rewrite(s):
-    """Claude-Code-isms -> OpenCode/absolute-path equivalents."""
-    s = s.replace("$CLAUDE_PROJECT_DIR/.claude", CCGS_ABS)
-    s = s.replace("$CLAUDE_PROJECT_DIR", ".")
+    """Claude-Code-isms -> OpenCode/absolute-path equivalents.
+
+    Handles every shell form of the two env vars Claude Code injects:
+      $CLAUDE_PROJECT_DIR  ${CLAUDE_PROJECT_DIR}  ${CLAUDE_PROJECT_DIR%/}
+      ${CLAUDE_PROJECT_DIR:-}  ${CLAUDE_PROJECT_DIR:-.}   (+ optional /.claude)
+      $CLAUDE_SKILL_DIR    ${CLAUDE_SKILL_DIR}
+      ${CLAUDE_SKILL_DIR}/../../  (skill dir -> ccgs root)
+    """
+    # 1) skill dir: "/../../" variant points at the ccgs root (hooks/, scripts/)
+    s = re.sub(r"\$\{(CLAUDE_SKILL_DIR)[^}]*\}/\.\./\.\./", CCGS_ABS + "/", s)
+    s = re.sub(r"\$(CLAUDE_SKILL_DIR)/\.\./\.\./", CCGS_ABS + "/", s)
+    # 2) bare skill-dir var -> this skill's installed dir (or cwd outside skills).
+    #    Braced form may carry a default ("${CLAUDE_SKILL_DIR:-x}"); the
+    #    unbraced form must NOT swallow trailing punctuation - see the
+    #    "$VAR\" ... :" corruption fixed in 1.2.1 (no [^}]* outside braces).
+    s = re.sub(r"\$\{CLAUDE_SKILL_DIR[^}]*\}", _SKILL_DIR_ABS or ".", s)
+    s = re.sub(r"\$CLAUDE_SKILL_DIR\b", _SKILL_DIR_ABS or ".", s)
+    # 3) project-dir var; keep a trailing "/.claude" folded into the ccgs root.
+    #    Braced forms first (they may carry defaults/modifiers), then bare.
+    s = re.sub(r"\$\{CLAUDE_PROJECT_DIR[^}]*\}(/\.claude)?",
+               lambda m: CCGS_ABS if m.group(1) else ".", s)
+    s = re.sub(r"\$CLAUDE_PROJECT_DIR\b(/\.claude)?",
+               lambda m: CCGS_ABS if m.group(1) else ".", s)
+    # 4) bare .claude/ references -> ccgs root
     s = s.replace(".claude/", CCGS_ABS + "/")
+    # 5) Claude tool names -> OpenCode equivalents / neutral phrasing
     s = s.replace("`AskUserQuestion`", "the `question` tool")
     s = s.replace("AskUserQuestion", "the question tool")
+    # Claude Task-tool vocabulary -> OpenCode subagent phrasing.
+    # Bracketed placeholders ("subagent_type: [engine specialist]") first, then
+    # concrete agent ids ("subagent_type: release-manager").
+    s = re.sub(r"subagent_type:\s*\[([^\]]+)\]", r"subagent: <\1>", s)
     s = re.sub(r"subagent_type:\s*([A-Za-z0-9_-]+)", r"the `\1` subagent", s)
     return s
 
@@ -150,11 +179,13 @@ def copy_text_file(src, dst):
 
 def install_skills():
     """Copy each skill dir; strip Claude frontmatter keys; rewrite paths."""
+    global _SKILL_DIR_ABS
     skill_descs = {}
     src_root = SRC_CLAUDE / "skills"
     for d in sorted(p for p in src_root.iterdir() if p.is_dir()):
         sid = d.name
         dest = OC / "skills" / sid
+        _SKILL_DIR_ABS = dest.as_posix()   # for ${CLAUDE_SKILL_DIR} rewriting
         if dest.exists():
             shutil.rmtree(dest)
         desc = None
@@ -175,6 +206,7 @@ def install_skills():
             desc = "Claude Code Game Studios skill: " + sid
         skill_descs[sid] = desc
         stats["skills"] += 1
+    _SKILL_DIR_ABS = None
     return skill_descs
 
 
@@ -203,8 +235,14 @@ def install_support_tree():
         for f in sorted(s.rglob("*")):
             if f.is_dir():
                 continue
-            copy_text_file(f, CCGS / name / f.relative_to(s))
+            dst = CCGS / name / f.relative_to(s)
+            copy_text_file(f, dst)
+            if f.suffix == ".sh":
+                patch_root_anchors(dst)
             n += 1
+    yh = CCGS / "hooks" / "yaml-helper.sh"
+    if yh.exists():
+        n += patch_yaml_helper(yh)
     for extra in ("settings.json",):
         s = SRC_CLAUDE / extra
         if s.exists():
@@ -230,6 +268,106 @@ rewrote `.claude/` references to absolute paths under
 directory. Claude-only features (settings.json hooks, path-scoped rules,
 statusline) are not ported - see the repository README.
 """.replace("{ccgs}", CCGS_ABS)
+
+
+_ROOT_ANCHOR_SUBS = [
+    # statement form -> resolve from the invocation directory, walking up to the
+    # nearest project.yaml (upstream: the script lived inside the project repo)
+    ('cd "$HERE/../.."', 'cd "$(ccgs_project_root)"'),
+    ('cd "$(dirname "$0")/../.."', 'cd "$(ccgs_project_root)"'),
+    ('cd "$(dirname "${BASH_SOURCE[0]}")/../.."', 'cd "$(ccgs_project_root)"'),
+    # assignment form -> same resolver
+    ('"$(cd "$(dirname "$0")/../.." && pwd)"', '"$(ccgs_project_root)"'),
+]
+
+# Injected after the shebang of every patched script. Mirrors the upward search
+# patched into yaml-helper.sh: project root = cwd if it holds project.yaml,
+# else the nearest ancestor that does, else cwd. Terminates on every platform
+# (guards against fixed points like "." and "/").
+_ROOT_FN = '''ccgs_project_root() {  # [port] project root = nearest project.yaml above cwd
+  ccgs_d="${PWD}"
+  while [ -n "$ccgs_d" ] && [ "$ccgs_d" != "/" ] && [ "$ccgs_d" != "." ]; do
+    if [ -f "$ccgs_d/project.yaml" ]; then
+      cd "$ccgs_d" 2>/dev/null && { pwd -W 2>/dev/null || pwd; return 0; }
+      printf '%s\\n' "$ccgs_d"; return 0
+    fi
+    ccgs_n="$(dirname "$ccgs_d")"
+    [ "$ccgs_n" = "$ccgs_d" ] && break
+    ccgs_d="$ccgs_n"
+  done
+  pwd -W 2>/dev/null || pwd
+}
+'''
+
+
+def patch_root_anchors(path):
+    """Scripts assume `<script>/../..` is the project root - true when the
+    framework ships inside the project repo (upstream layout), false after a
+    global install, where it points at ~/.config/opencode. Redirect the anchor
+    to a resolver over the invocation directory, and inject the resolver after
+    the shebang. CCGS_ROOT assignments (framework-tree lookups) are left alone.
+    """
+    lines = path.read_text(encoding="utf-8").splitlines()
+    changed = 0
+    for i, ln in enumerate(lines):
+        if "CCGS_ROOT=" in ln:
+            continue
+        for old, new in _ROOT_ANCHOR_SUBS:
+            if old in ln:
+                lines[i] = ln = ln.replace(old, new)
+                changed += 1
+    if not changed:
+        return 0
+    if not any("ccgs_project_root()" in x for x in lines):
+        at = 1 if lines and lines[0].startswith("#!") else 0
+        lines[at:at] = _ROOT_FN.rstrip("\n").split("\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    return changed
+
+
+def patch_yaml_helper(path):
+    """Replace yaml-helper's self-root fallback (framework location was the
+    anchor upstream) with an upward search for project.yaml from the launch
+    directory - the OpenCode equivalent of 'an anchor that cannot drift'.
+    """
+    t = path.read_text(encoding="utf-8")
+    search = (
+        '  _yh_start="${PWD}"\n'
+        '  while [ -n "$_yh_start" ] && [ "$_yh_start" != "/" ] && '
+        '[ "$_yh_start" != "." ]; do\n'
+        '    if [ -f "$_yh_start/project.yaml" ]; then\n'
+        '      CLAUDE_PROJECT_DIR="$_yh_start"\n'
+        '      cd "$_yh_start" 2>/dev/null\n'
+        '      break\n'
+        '    fi\n'
+        '    _yh_next="$(dirname "$_yh_start")"\n'
+        '    [ "$_yh_next" = "$_yh_start" ] && break\n'
+        '    _yh_start="$_yh_next"\n'
+        '  done\n')
+    a_old = ('      if [ -z "." ] || [ ! -f "./project.yaml" ]; then\n'
+             '        _yh_self_root=$(cd "$(dirname "$0")/../.." 2>/dev/null && pwd)\n'
+             '        [ -n "$_yh_self_root" ] && CLAUDE_PROJECT_DIR="$_yh_self_root"\n'
+             '      fi\n')
+    a_new = ('      # [port] upward search: the helpers no longer live inside the\n'
+             '      # project repo, so the script-location anchor is meaningless.\n'
+             + search)
+    b_old = ('      _yh_self_root=$(cd "$(dirname "$0")/../.." 2>/dev/null && pwd)\n'
+             '      if [ -z "$_yh_self_root" ] || ! cd "$_yh_self_root"; then\n'
+             '        echo "yaml-helper.sh: cannot find the project root from $0" >&2\n'
+             '        exit 2\n'
+             '      fi\n')
+    b_new = ('      # [port] upward search, same as the resolve_config branch above.\n'
+             + search)
+    n = 0
+    if a_old in t:
+        t = t.replace(a_old, a_new)
+        n += 1
+    if b_old in t:
+        t = t.replace(b_old, b_new)
+        n += 1
+    if n:
+        path.write_text(t, encoding="utf-8", newline="\n")
+    return n
 
 
 def add_port_note(path):
@@ -326,6 +464,8 @@ Installed globally into this OpenCode config on {os.environ.get('PORT_DATE','')}
   `technical-director`, `producer`, `game-designer`, `gameplay-programmer`, ...
 - **Support tree** (bash helpers, docs, rules, hooks, templates):
   `{CCGS_ABS}/`
+- **Project root**: helpers resolve it from the invocation directory, walking up
+  to the nearest `project.yaml` (run commands from your game folder).
 - **Per-project config**: each game project needs its own `project.yaml` at the
   project root - run `/adopt` in an existing project or `/start` in a new folder.
 - **Bash required**: studio helpers are bash scripts; install Git for Windows on

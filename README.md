@@ -38,7 +38,7 @@
 |---|---|
 | 원본 | Donchitos/Claude-Code-Game-Studios v1.2.0 (commit `05ad7c8`, MIT) |
 | 포팅 대상 도구 | [OpenCode](https://opencode.ai) V2 |
-| 포팅 도구 | `port/port.py` (Python 3, 멱등 재실행 가능) |
+| 포팅 도구 | `port/port.py` v1.2.1 (Python 3, 멱등 재실행 가능) |
 | 설치 위치 | OpenCode 전역 설정 `~/.config/opencode/` |
 | 실제 이식 규모 | 스킬 74개 · 서브에이전트 49개 · 슬래시 커맨드 74개 · 지원 스크립트/문서 198개 · 권한 규칙 84개 |
 
@@ -126,11 +126,61 @@ python port/port.py
 ```
 skills=74 agents=49 commands=74 ccgs_files=198 permission_rules=84
 frontmatter problems: 0        # 49개 에이전트 전부 OpenCode V2 스키마 파싱 통과
-Claude-isms 잔여: 22건          # 미연결 훅 스크립트의 주석/env 언급 + 참고용 원문
+bash -n: 0 / 51                # 이식된 bash 스크립트 전부 구문 검사 통과
+Claude-isms 잔여: 코드 기준 0    # 남은 언급은 린터 정규식·주석·포트 노트뿐
 ```
 
 OpenCode 세션에서 스킬 74개가 정상 등록되고 전역 `AGENTS.md`와
 `opencode.jsonc` 변경사항이 설정 로드에 반영되는 것을 확인했습니다.
+
+### 포트 수정 이력 (v1.2.1 — 사용자 제보로 발견·수정)
+
+포팅 후 실제 사용 중 보고된 오류들을 근본 원인까지 추적해 모두 고쳤습니다.
+아래 항목들은 **원본 버그가 아니라, 포팅 과정에서 생긴 결함**입니다.
+
+**1) `${...}` 중괄호 형태 환경변수 누락 → bash 구문 오류**
+
+- 증상: `CLAUDE_PROJECT_DIR` 관련 오류, `yaml-helper.sh: line 766: syntax
+  error near unexpected token '('`
+- 원인: 포트의 치환이 `$CLAUDE_PROJECT_DIR`(달러 직결)만 처리하고
+  `${CLAUDE_PROJECT_DIR}`·`${CLAUDE_PROJECT_DIR%/}`·`${CLAUDE_PROJECT_DIR:-}`
+  등 중괄호 형태 61건을 통과시켰다. 게다가 사용한 정규식 `[^}/\s]*`가 중괄호
+  없는 변수 뒤의 `"`·`;`까지 삼켜 `_YH_ROOT="."; return 0`가
+  `_YH_ROOT=". return 0`으로 망가지는 2차 손상이 발생 — 따옴표 불균형이
+  bash 파싱을 깨뜀렸다
+- 수정: 정규식을 "중괄호/비중괄호 분리 + trailing punctuation 보존"으로 재작성,
+  24개 파일의 변수 참조를 전부 안전 치환. `bash -n` 51/51 통과로 검증
+
+**2) 프로젝트 루트 앵커가 설정 폴더를 가리킴**
+
+- 증상: `project.yaml`이 없는 프로젝트에서 `project-state.sh` 등의 root 출력이
+  `C:/Users/<user>/.config/opencode`(OpenCode 설정 폴더)로 잘못 표시
+- 원인: 원본 스크립트 31개가 `cd "$HERE/../.."`로 "스크립트 위치 2단계 위 =
+  프로젝트 루트"를 가정한다. 원본 레이아웃(프로젝트 안에 `.claude/` 존재)에선
+  맞지만, 전역 설치에선 그 위치가 설정 폴더가 된다
+- 수정: 포트가 앵커를 `ccgs_project_root()` 리졸버로 교체하고 스크립트마다
+  주입 — 프로젝트 루트 = 실행 디렉터리, 없으면 `project.yaml`이 있는 가장 가까운
+  상위 디렉터리(서브폴더 실행도 upstream과 동일하게 동작). 프레임워크 트리
+  조회용 `CCGS_ROOT`는 의도적으로 유지
+- 검증: 프로젝트 루트·하위 폴더(`design/gdd`) 양쪽에서 루트 해석과
+  `project.yaml` 읽기 정상 동작 확인
+
+**3) yaml-helper 셀프 루트 폴백 동일 문제**
+
+- 수정: 두 분기 모두 위의 상위 탐색으로 교체
+
+**4) 기타 정리**
+
+- `${CLAUDE_SKILL_DIR}/../../` → ccgs 루트 절대경로, 그 외 형태는 스킬 자신의
+  설치 디렉터리로 치환
+- `subagent_type: X` → OpenCode식 서브에이전트 표현으로 치환(대괄호
+  플레이스홀더 포함), `AskUserQuestion` → `question` 도구 표현(잔여 0)
+- `ccgs/docs/config-resolution.md`에 OpenCode 포트 노트 자동 주입(멱등)
+
+**의도적으로 남겨둔 것**: `agent-check.sh`·`compat-inventory.sh` 등 린터/진단
+스크립트가 Claude 토큰을 **탐지 대상**으로 쓰는 패턴, 훅 스크립트 내 주석,
+업스트림 `CLAUDE.md` 참고용 원본(`ccgs/studio-reference.md`) — 이들은 실행
+경로에 영향 없음.
 
 ### 업데이트 / 제거
 
